@@ -1,0 +1,13 @@
+# Ложные срабатывания в истории upstream (Anezium/Rokid-Nexus), проверено 2026-09-24:
+# PEM-шаблон в AdbKeyStore, тестовые фикстуры, публичные токены lyrics-провайдеров.
+172252e7f747abbe5d0161dd9f0d95f4806cfaae:BUSSPEC.md:generic-api-key:240
+172252e7f747abbe5d0161dd9f0d95f4806cfaae:docs/PLUGIN_SDK.md:generic-api-key:239
+172252e7f747abbe5d0161dd9f0d95f4806cfaae:bus-client/src/test/java/com/anezium/rokidbus/client/plugin/SurfaceModelsTest.kt:generic-api-key:135
+4c875ba56d5013332aa6da8983dafdea470e8a08:shared/src/test/java/com/anezium/rokidbus/shared/MediaSyncLinkOfferContractTest.kt:generic-api-key:17
+6b62c8c7f2a2b59f98be3cc21816a3704f82dbd5:shared/src/test/java/com/anezium/rokidbus/shared/CameraLinkOfferContractTest.kt:generic-api-key:83
+37d7dd24814861e12ab5486d7166170ed1ef65a8:shared/src/test/java/com/anezium/rokidbus/shared/CameraLinkOfferContractTest.kt:generic-api-key:17
+979427ec22c143ab7f6c173f549897e47067f268:plugins/lens/src/test/java/com/anezium/rokidbus/plugin/lens/PhoneLensLinkPoliciesTest.kt:generic-api-key:47
+a18064f37d96e469ec9e4e95fafdbf3c24be5673:glasses-hub/src/main/java/com/anezium/rokidbus/glasses/AdbKeyStore.kt:private-key:91
+47419bc46140292996ee23aca82d4a0fc9d8d0b0:glasses-hub/src/main/java/com/anezium/rokidbus/glasses/AdbKeyStore.kt:private-key:91
+0d14175f026aee3a51f3d957bcc35fedb8a9faa6:plugin-lyrics/src/main/java/com/anezium/rokidbus/lyrics/lyrics/MusixmatchLyricsProvider.kt:generic-api-key:596
+0d14175f026aee3a51f3d957bcc35fedb8a9faa6:plugin-lyrics/src/main/java/com/anezium/rokidbus/lyrics/lyrics/NeteaseLyricsProvider.kt:generic-api-key:724
