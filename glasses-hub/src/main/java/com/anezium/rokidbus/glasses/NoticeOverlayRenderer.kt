@@ -3,15 +3,20 @@ package com.anezium.rokidbus.glasses
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.text.Layout
+import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -21,6 +26,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.anezium.rokidbus.client.ui.BusTheme
+import com.anezium.rokidbus.shared.ActivityTrack
 /**
  * The ROM sleeps the display five seconds after the last input (vendor-set
  * `screen_off_timeout`), which is shorter than a notice's own life -- a dictated
@@ -108,6 +114,7 @@ object NoticeOverlayRenderer {
     private var exitRunning = false
     private var renderedSeq: Long? = null
     private var inkMorph: NoticeInkMorphToken? = null
+    private var composeUnsubscribe: (() -> Unit)? = null
 
     private val slide = HudMotionValue(0f) { offset -> band?.translationY = offset }
     private val fade = HudMotionValue(0f) { alpha ->
@@ -122,12 +129,16 @@ object NoticeOverlayRenderer {
         insetUnsubscribe = HudTopInset.observe(service, ::applyHudTopInset)
         unsubscribe?.invoke()
         unsubscribe = NoticeController.observe(::render)
+        composeUnsubscribe?.invoke()
+        composeUnsubscribe = NoticeComposeMirror.observe { line -> band?.renderCompose(line) }
     }
 
     fun onServiceDestroyed(service: AccessibilityService) {
         if (this.service !== service) return
         unsubscribe?.invoke()
         unsubscribe = null
+        composeUnsubscribe?.invoke()
+        composeUnsubscribe = null
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
         teardown()
@@ -352,6 +363,8 @@ object NoticeOverlayRenderer {
     internal class NoticeBandView(
         context: Context,
         private val pageCountChanged: ((String, Long, Int) -> Unit)? = null,
+        /** An activity island draws the band's outline itself. */
+        chromeless: Boolean = false,
     ) : LinearLayout(context) {
         private val title = row(bold = true, sizeSp = TITLE_SP, color = BusTheme.phosphor)
         private val image = NoticeImageView(context)
@@ -381,8 +394,30 @@ object NoticeOverlayRenderer {
                 LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
             )
         }
+        private val compose = TextView(context).apply {
+            setTextColor(BusTheme.text)
+            textSize = BODY_SP
+            typeface = Typeface.MONOSPACE
+            includeFontPadding = false
+            minLines = COMPOSE_LINES
+            maxLines = COMPOSE_LINES
+            isVerticalScrollBarEnabled = false
+            val padding = BusTheme.dp(context, 5)
+            setPadding(padding, padding, padding, padding)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFF000000.toInt())
+                setStroke(BusTheme.dp(context, 1), BusTheme.dim)
+                cornerRadius = BusTheme.dp(context, 5).toFloat()
+            }
+            visibility = View.GONE
+        }
         private val actions = HudActionRowView(context)
+        private val track = ActivityTrackView(context).apply { visibility = View.GONE }
         private var noticeIdentity: Pair<String, Long>? = null
+        private var noticeOwner = ""
+        private var liveChips: List<HudActionChip> = emptyList()
+        private var selectedChip = 0
         private var pluginFooter: String? = null
         private var renderedPageIndex = 0
         private var measuredPageCount = 1
@@ -397,14 +432,16 @@ object NoticeOverlayRenderer {
             val horizontal = BusTheme.dp(context, 10)
             val vertical = BusTheme.dp(context, 8)
             setPadding(horizontal, vertical, horizontal, vertical)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                // Pure black. The additive optics emit nothing for black, so the
-                // fill reads as transparent and only the border and text light up.
-                // A "nicer" translucent grey is a visible grey rectangle on-glasses.
-                setColor(0xFF000000.toInt())
-                setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
-                cornerRadius = BusTheme.dp(context, 7).toFloat()
+            if (!chromeless) {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    // Pure black. The additive optics emit nothing for black, so the
+                    // fill reads as transparent and only the border and text light up.
+                    // A "nicer" translucent grey is a visible grey rectangle on-glasses.
+                    setColor(0xFF000000.toInt())
+                    setStroke(BusTheme.dp(context, 1), BusTheme.hairline)
+                    cornerRadius = BusTheme.dp(context, 7).toFloat()
+                }
             }
             addView(title, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             addView(
@@ -417,6 +454,20 @@ object NoticeOverlayRenderer {
                 body,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                     topMargin = BusTheme.dp(context, 3)
+                },
+            )
+            // Under the message it answers, the way an inline reply sits under
+            // the notification it replies to.
+            addView(
+                compose,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, 6)
+                },
+            )
+            addView(
+                track,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = BusTheme.dp(context, 5)
                 },
             )
             addView(
@@ -497,6 +548,7 @@ object NoticeOverlayRenderer {
          * with being rewritten.
          */
         fun render(notice: NexusNoticeSurface) {
+            track.render(null)
             noticeIdentity = notice.surfaceId to notice.seq
             pluginFooter = noticeFooterText(notice)
             renderedPageIndex = notice.pageIndex
@@ -526,10 +578,62 @@ object NoticeOverlayRenderer {
                 paging = paging,
             )
             updateFooter()
-            actions.render(
-                notice.liveActions.map { HudActionChip(it.glyph, it.label) },
-                notice.selectedActionIndex,
-            )
+            noticeOwner = notice.ownerPluginId
+            liveChips = notice.liveActions.map { HudActionChip(it.glyph, it.label) }
+            selectedChip = notice.selectedActionIndex
+            renderCompose(NoticeComposeMirror.current)
+        }
+
+        /**
+         * The band's copy of its owner's field; see [NoticeComposeMirror]. Only
+         * the plugin whose band this is may have its typing shown here.
+         */
+        fun renderCompose(line: NoticeComposeMirror.Line?) {
+            val shown = line?.takeIf { noticeOwner.isNotEmpty() && it.ownerPluginId == noticeOwner }
+            if (shown == null) {
+                compose.visibility = View.GONE
+                actions.render(liveChips, selectedChip)
+                return
+            }
+            val render = noticeComposeRender(shown)
+            compose.text = SpannableString(render.text).apply {
+                setSpan(
+                    BackgroundColorSpan(BusTheme.phosphor),
+                    render.caretStart,
+                    render.caretEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                setSpan(
+                    ForegroundColorSpan(Color.BLACK),
+                    render.caretStart,
+                    render.caretEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                if (render.placeholderStart < render.text.length) {
+                    setSpan(
+                        ForegroundColorSpan(BusTheme.dim),
+                        render.placeholderStart,
+                        render.text.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                }
+            }
+            compose.visibility = View.VISIBLE
+            // A band being typed into asks nothing else: Enter belongs to the
+            // field, so a row of chips here would only be a question it is not
+            // asking.
+            actions.render(emptyList(), 0)
+            compose.post { scrollComposeToCaret(render.caretStart) }
+        }
+
+        /** Keeps the caret's line in the field's two visible lines as the text grows past them. */
+        private fun scrollComposeToCaret(caret: Int) {
+            val layout = compose.layout ?: return
+            val visible = compose.height - compose.totalPaddingTop - compose.totalPaddingBottom
+            if (visible <= 0) return
+            val caretBottom = layout.getLineBottom(layout.getLineForOffset(caret))
+            val maxScroll = (layout.height - visible).coerceAtLeast(0)
+            compose.scrollTo(0, (caretBottom - visible).coerceIn(0, maxScroll))
         }
 
         /**
@@ -544,8 +648,12 @@ object NoticeOverlayRenderer {
             leadingGlyph: Drawable?,
             actionChips: List<HudActionChip> = emptyList(),
             selectedActionIndex: Int = 0,
+            track: ActivityTrack? = null,
         ) {
+            this.track.render(track)
             noticeIdentity = null
+            noticeOwner = ""
+            compose.visibility = View.GONE
             pluginFooter = footerText
             renderedPageIndex = 0
             measuredPageCount = 1
@@ -773,5 +881,6 @@ object NoticeOverlayRenderer {
     private const val TITLE_SP = 15f
     private const val BODY_SP = 12f
     private const val FOOTER_SP = 11f
+    private const val COMPOSE_LINES = 2
     private const val GLYPH_SIZE_DP = 36
 }

@@ -19,7 +19,7 @@ resolved transitively.
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.19.0")
+    implementation("com.github.Anezium.Rokid-Nexus:bus-client:sdk-v0.21.0")
 }
 ```
 
@@ -217,7 +217,11 @@ column. Open it in a browser.
 A card can carry one bounded, focusable text field in place of its read-only
 body — the one way a plugin gets typed input back from the wearer. It takes
 ordinary Android text input: a keyboard bonded to the glasses, or the phone's
-own Keyboard & remote screen, which types into the glasses' Nexus IME.
+own Keyboard & remote screen, which types into the glasses' Nexus IME. On a
+phone hub from 1.4.13, opening the field brings that screen forward with its
+keyboard up — by itself when the user has let Nexus display over other apps,
+otherwise through a notification to tap. Fields the wearer merely lands on in
+other apps never do this.
 
 ```kotlin
 data class EditableSurfaceField(
@@ -225,6 +229,7 @@ data class EditableSurfaceField(
     val placeholder: String? = null,
     val initialText: String? = null,
     val submitLabel: String? = null,
+    val inNotice: Boolean = false,
 )
 
 data class NexusCard(
@@ -256,6 +261,21 @@ title is. The card renders a real focusable `EditText` rather than the
 non-interactive body a plain card gets, so normal Android input — a bonded
 hardware keyboard, or the phone keyboard through the glasses IME — reaches it
 directly; nothing plugin-side subscribes to keystrokes as they happen.
+
+Set `inNotice = true` (SDK 0.20.0, glasses hub 1.4.13) to have the field
+typed into your own notice band instead, like an Android inline reply: the band draws the text and caret live
+under its message and drops its action row while the field is open. It only
+applies while your band is the one on screen, so open the field from a band
+action (Relay's Type chip does) and keep the band alive while it is open. On a
+hub that predates it, or with no band of yours up, the field shows as a card as
+usual, so the flag never costs a fallback path. From glasses hub 1.5.0 the
+screen behind stays in view while the band carries the field; earlier hubs
+draw it black.
+
+A card with a title and nothing else behaves the same way under your band on
+glasses hub 1.5.0: it draws nothing while a band of yours is up, so you can
+keep your session open under the band without covering the screen, and it
+comes back as a card about 1.5 s after the band goes unless you hide it first.
 
 The wearer's answer comes back exactly once, on `onSurfaceTextCommitted`, when
 they submit (Enter, on a bonded keyboard or on the phone keyboard; `label` and
@@ -412,6 +432,13 @@ data class NexusActivityAction(
     val label: String,
 )
 
+data class NexusActivityTrack(
+    val count: Int,
+    val at: Int,
+    val target: Int,
+    val label: String? = null,
+)
+
 data class NexusActivity(
     val glyph: String,
     val primary: String,
@@ -422,13 +449,19 @@ data class NexusActivity(
     val actions: List<NexusActivityAction> = emptyList(),
     val maxDurationMs: Long? = null,
     val wakeDisplay: Boolean = false,
+    val badge: String? = null,
+    val track: NexusActivityTrack? = null,
+    val measure: String? = null,
 )
 
 val supportsActivitySurface: Boolean
+val supportsActivityExtras: Boolean
+val registrationGeneration: Int
 fun startActivity(activity: NexusActivity): NexusSdkResult
 fun updateActivity(
     activity: NexusActivity,
     significant: Boolean = false,
+    urgent: Boolean = false,
 ): NexusSdkResult
 fun endActivity(): NexusSdkResult
 
@@ -454,6 +487,14 @@ percentage progress is `0..100`; and there are at most three actions.
 `maxDurationMs`, when present on start, is clamped by the hub to one minute
 through 12 hours. Without it the activity lasts until explicitly ended,
 replaced, or its owner disconnects. There is no TTL and no keep-alive loop.
+
+Because an activity belongs to the registration that started it, a plugin
+that keeps one running across a hub reconnect must start it again on the new
+registration. `onRegistrationState(APPROVED)` alone cannot tell: it is
+reported twice for every registration (at once, then with the capability
+metadata). Compare `registrationGeneration` (SDK 0.21.0) with the value
+current when the activity started; a different number is a new registration
+that holds nothing yet.
 
 Activity and action glyphs are strings, not enums, because the glyph vocabulary
 is additive. Use a platform glyph for each action; the main activity glyph may
@@ -547,6 +588,57 @@ such as a maneuver change or arrival. The hub decides whether that becomes a
 flare and permits at most one flare per activity every 10 seconds; a throttled
 flare becomes a pulse and is never queued. Do not use `significant` for distance
 countdown ticks.
+
+#### Activity extras
+
+`badge`, `measure`, `track`, and `urgent` are extras (SDK 0.21.0, both hubs
+1.5.0): optional, drawn by the platform, and understood only when both hubs
+support them. `supportsActivityExtras` reports
+that. Without it the SDK still sends the activity, the older hub drops the
+extras, and the wearer sees the v1 form, so nothing needs a second code path.
+
+- `badge` — at most 5 characters, such as a line number ("38", "M4",
+  "RER B"). The expanded panel and the flare draw it as an outlined plate where
+  the glyph would be. The chip keeps `glyph`.
+- `measure` — at most 8 characters, a second quantity that belongs with
+  `primary`, such as a walk's distance next to its minutes ("250 m"). The
+  expanded panel reads "3 min - 250 m"; the chip keeps "3 min" with "250 m"
+  stacked under it beside the glyph, and `secondary` on its line below.
+- `track` — `NexusActivityTrack(count, at, target, label)`: 2 to 12 ordered
+  positions such as the stops of a ride or the stages of a delivery, where the
+  process is now, and where the wearer is headed, with an optional label of at
+  most 20 characters naming the target. It replaces the progress bar in the
+  panel. Keep sending `progress` too; older glasses draw that.
+- `urgent` — pass `updateActivity(activity, significant = true, urgent = true)`
+  for a time-critical transition such as "get off at the next stop". It is
+  refused without `significant`. The flare gets a bright outline that beats
+  once it has arrived, and it has its
+  own budget of one per activity per minute, so an ordinary flare a few seconds
+  earlier cannot swallow it. Past that budget it is an ordinary significant
+  update. It never wakes a display that `wakeDisplay` would not.
+
+The platform never advances a track or counts anything down between your
+updates: what the wearer reads is what you last sent, so send the values the
+source you follow reports.
+
+```kotlin
+nexusClient?.updateActivity(
+    NexusActivity(
+        glyph = "bus",
+        badge = "38",
+        primary = "Get off",
+        secondary = "Next stop: Luxembourg",
+        progress = NexusActivityProgress.Percent(80),
+        track = NexusActivityTrack(count = 5, at = 3, target = 4, label = "Luxembourg"),
+    ),
+    significant = true,
+    urgent = true,
+)
+```
+
+The expanded panel fits `primary` rather than cutting it: it shrinks first, and
+if the value still does not fit beside the ETA, the ETA moves to the secondary
+row. The 12-character cap is unchanged.
 
 By default, an idle expanded panel collapses to its chip after about 10 seconds.
 The wearer can keep the primary activity expanded from Nexus phone Settings.

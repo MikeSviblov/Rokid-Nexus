@@ -1,6 +1,144 @@
 # Changelog
 
-## Unreleased
+## 1.5.0
+
+### Upgrade together
+
+Install **both Nexus hubs 1.5.0**, then update Assistant to **1.4.8**.
+**Navigation 0.1.0** is new: it keeps the route Google Maps or Citymapper is
+guiding you on as one activity on the glasses, and needs both hubs 1.5.0.
+SDK **0.21.0** adds activity extras and `registrationGeneration`; plugin API
+version 3 and grants are unchanged, and a plugin on an older SDK keeps
+working as it did.
+
+### Glasses hub
+
+- **Type over what you were looking at.** A field typed inside its plugin's
+  band (Relay's and Assistant's *Type*) now leaves the app behind it in view
+  instead of a black screen. The surface holding the real field draws nothing
+  of its own and runs in its own translucent task, so neither it nor the Nexus
+  window behind it covers the display.
+- **A card can wait under its band.** A card with a title and nothing else
+  draws nothing while its own plugin's band is up, so a plugin can keep its
+  session open without covering the screen; Assistant 1.4.8 does this after
+  the assist button. It comes back as a card if the band goes and the plugin
+  does not hide it.
+- **No more grey veil.** A focused surface no longer gets Android's default
+  focus highlight, which washed a light grey over everything a see-through
+  surface left in view.
+- **Ink tiles that fit.** A figure tile stretched across a column is measured
+  at the column's width, so its label and value are no longer cut; a grid row
+  takes the height its content needs instead of squashing the row below it.
+
+### Activities
+
+- **The expanded panel fits its value instead of cutting it.** A 12-character
+  primary such as "Depart 3 min" used to render as three letters next to an ETA.
+  The panel now shrinks it, and moves the ETA to the second row when it still
+  does not fit. Every plugin that already uses activities benefits without an
+  update.
+- **Activity extras, for plugins on the new SDK.** A `badge` draws a line number
+  such as "38" as an outlined plate in the glyph's place; a `measure` puts a
+  second quantity with the value ("3 min - 250 m" expanded, "250 m" under
+  "3 min" beside the glyph in the chip, the street still below); a `track`
+  draws stops or stages as a row of dots instead of the progress bar; an
+  `urgent` significant update gives the flare a bright outline that beats once,
+  at most once a minute per activity, so "get off at the next stop" cannot be
+  swallowed by the flare just before it. Nothing is estimated on the glasses:
+  every value is the plugin's last report.
+- **Activities move as one shape.** The chip, the expanded panel and the flare
+  are now one outline that springs from form to form, with the content
+  revealed inside it, instead of boxes that swap or fade across each other.
+  An activity also grows in when it starts and folds away when it ends.
+- **Transit glyphs:** `bus`, `tram`, `train`, `metro`.
+- **Mixed versions keep working.** Extras are announced separately from the
+  activity protocol version, which stays 1. With an older hub on either side,
+  activities keep working and simply show without extras.
+
+### Plugin SDK 0.21.0
+
+- Add optional `NexusActivity.badge`, `measure` and `track`, and
+  `updateActivity(..., urgent = true)` for a significant update, with
+  `supportsActivityExtras` to tell whether both hubs draw them. Without it the
+  activity is still sent and shows without its extras, so no fallback path is
+  needed.
+- Add `registrationGeneration`. `onRegistrationState(APPROVED)` is reported
+  twice for every registration, so it cannot tell a reconnect on its own; a
+  plugin that keeps an activity running compares this number with the one
+  current when the activity started, and starts it again when it changed.
+
+## 1.4.14
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.14**. Plugins, the SDK (0.20.0) and grants are
+unchanged.
+
+### Phone and glasses hubs
+
+- **The glasses keep the Nexus keyboard.** Keyboard & remote only reaches a
+  glasses field through Nexus's own glasses keyboard, and the Hi Rokid app can
+  select Rokid's again at any time. The glasses now take it back at boot and
+  whenever Rokid's replaces it, while *Keep Nexus keyboard on glasses* is on
+  (the default); turn it off in Keyboard & remote to type through Hi Rokid
+  instead. A keyboard you installed and chose yourself is never replaced, and
+  after three takebacks in ten minutes the glasses stop fighting over it.
+- **Use Nexus keyboard on glasses.** When another keyboard is selected anyway,
+  Keyboard & remote says so and switches it in one tap. If the glasses hub lost
+  the permission to change it, the screen points to the glasses setup instead.
+  Both need both hubs.
+
+## 1.4.13
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.13**, then update Relay to **1.2.4**. Typing a
+reply inside the notice needs the new glasses hub; the phone keyboard opening by
+itself needs both. On older hubs Relay keeps working: Type opens the separate
+field as before. SDK **0.20.0** adds one optional field; plugin API version 3
+and grants are unchanged.
+
+### Phone and glasses hubs
+
+- **Type a reply inside the notice.** An editable field can ask to be drawn in
+  its own plugin's notice band. The band shows the text and a caret live under
+  the message, like an inline reply on an Android notification, and drops its
+  action row while the field is open. The band still never takes focus: the
+  real field stays on the glasses' surface activity, drawn black, and the band
+  draws a local copy of it. Nothing typed crosses the bus before the single
+  commit, as with any editable field.
+- **The phone keyboard comes to you.** When a plugin opens a text field on the
+  glasses, the phone brings Keyboard & remote forward with its keyboard up: on
+  its own when Nexus may display over other apps (an *Allow* row on that screen
+  asks once), otherwise through a notification to tap. It closes once the field
+  is done and returns to the app you were in, and keeps the glasses pointer
+  hidden until you touch the pad. Fields you merely land on in other glasses
+  apps never trigger it. It needs the Nexus keyboard to be the glasses' input
+  method.
+- **A `keyboard` glyph** joins the shared answering set, for chips that switch
+  a reply to typing.
+- **The glasses' `SPP TX` diagnostics are back.** Log the path and id of every
+  authenticated frame the glasses send, and the exception class when a send
+  fails, without the exception message. This matches the phone side and the
+  pre-1.4.12 format.
+
+### Plugin SDK 0.20.0
+
+- Add optional `EditableSurfaceField.inNotice`. It asks the glasses to draw the
+  field inside the plugin's own visible notice band instead of as a card. It
+  applies only while that band is up; otherwise, and on a glasses hub older
+  than 1.4.13, the card renders as before, so no fallback path is needed.
+
+## 1.4.12
+
+### Upgrade together
+
+Install **both Nexus hubs 1.4.12**. The SPP transport now authenticates both
+ends, so a 1.4.12 hub refuses an older peer: with mixed versions, media sync,
+Wireless ADB traffic, and every other binary or large message stay off until
+the second hub is updated. Update the phone app first, then the glasses app
+from the phone as usual; the glasses update does not depend on SPP. Plugin API
+version 3, grants, and SDK 0.19.0 are unchanged.
 
 ### Phone and glasses hubs
 

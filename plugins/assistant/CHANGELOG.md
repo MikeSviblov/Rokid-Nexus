@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.4.8
+
+- **With the assist button, typing keeps to the band.** No full Assistant card
+  opens behind it, while you type or after you send: only the band, with
+  Thinking and then the answer, as when you ask out loud. Assistant closes on
+  its own once the answer has been shown and read.
+- **A question asked out loud with the assist button no longer leaves
+  Assistant open.** Once its band and its voice were done, the hub still counted
+  Assistant as the plugin on screen, so another plugin's card — Relay's *Type*,
+  for one — was refused as "Screen busy" until Assistant was stopped. It now
+  closes as soon as nothing of the question is left, heard or not.
+- **Choose how answers are drawn.** A new *Visual answers* setting.
+  *Templates only*, the new default, keeps drawn answers to the fixed layouts
+  made for the glasses — forecast, figures, steps, ranking, comparison,
+  schedule, chart — so the model no longer lays out pages of its own that come
+  out too big, cut off or half empty. *Free pages* brings those back alongside
+  the templates, as before. *Off* keeps every answer as text in the band.
+- **Template pages keep to what fits.** Every text in a template now has a
+  length the glasses draw whole — a tile's value, a row's label, a schedule's
+  time — and the model is told those lengths up front. Anything longer is sent
+  back to be shortened, instead of arriving cut off, squeezed or spilling out of
+  its box. With Rokid Nexus 1.5.0, a grid of figures also keeps every row at
+  full height.
+
+## 1.4.7
+
+- **Type the question instead.** A new *Input* setting picks how you ask.
+  *Voice only* stays the default and changes nothing. *Voice + Type button*
+  adds a *Type* chip to the band a moment after it starts listening: tap it
+  and the microphone stops. *Type first* skips the microphone and opens the
+  field straight away, however the question starts. Either way the band itself
+  becomes the text field, with your text and the caret drawn live inside it,
+  like an inline reply to an Android notification. The phone's Keyboard &
+  remote comes up on its own and closes again when you are done. Enter asks
+  the question exactly as if you had said it; Back cancels. Needs Rokid Nexus
+  1.4.13; with a glasses hub from 1.4.6 to 1.4.12 the field opens as its own
+  card instead, and an older one keeps to voice.
+
 ## 1.4.6
 
 - **Ink answers keep the Thinking band off.** An answer drawn as a page is no

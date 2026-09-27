@@ -372,6 +372,7 @@ class BusHubService : Service() {
     @Volatile private var remotePinSurfaceVersion = 0
     @Volatile private var remoteNoticeSurfaceVersion = 0
     @Volatile private var remoteActivitySurfaceVersion = 0
+    @Volatile private var remoteActivityExtrasVersion = 0
     @Volatile private var remoteInkSurfaceVersion = 0
     @Volatile private var remoteEditableSurfaceVersion = 0
     @Volatile private var remoteMaxImageBytes = 0
@@ -1889,17 +1890,19 @@ class BusHubService : Service() {
             path == BusPaths.GLASSES_SETUP_PAIRING_RESULT ||
             path == BusPaths.GLASSES_REPAIR_CONFIG ||
             path == BusPaths.GLASSES_REPAIR_REQUEST ||
-            path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
+            path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST ||
+            path == BusPaths.GLASSES_KEYBOARD_REQUEST
 
     private fun handleGlassesControlRequest(envelope: BusEnvelope, replyBinder: IBinder?) {
         if (envelope.path == BusPaths.GLASSES_REPAIR_CONFIG ||
             envelope.path == BusPaths.GLASSES_REPAIR_REQUEST ||
-            envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST
+            envelope.path == BusPaths.GLASSES_ACCESSIBILITY_CHECK_REQUEST ||
+            envelope.path == BusPaths.GLASSES_KEYBOARD_REQUEST
         ) {
             // Pure forwards: the glasses answer on GLASSES_REPAIR_REPLY / GLASSES_ACCESSIBILITY_
-            // CHECK_REPLY with the request's id, which the settings screen correlates itself. Only
-            // a transport failure is answered here, so "not connected" fails fast instead of eating
-            // the full timeout.
+            // CHECK_REPLY / GLASSES_KEYBOARD_REPLY with the request's id, which the calling screen
+            // correlates itself. Only a transport failure is answered here, so "not connected"
+            // fails fast instead of eating the full timeout.
             val error = sendRemote(envelope)
             if (error != null) {
                 deliverError(replyBinder, envelope.id, error)
@@ -4771,7 +4774,8 @@ class BusHubService : Service() {
             remoteImageSurfaceVersion = 0
             remoteInkSurfaceVersion = 0
             remoteMaxImageBytes = 0
-            // remotePinSurfaceVersion and remoteActivitySurfaceVersion deliberately survive,
+            // remotePinSurfaceVersion and remoteActivitySurfaceVersion (with its extras)
+            // deliberately survive,
             // for the same reason as the setup state below: support is a property of the
             // glasses, not of the link, and both tiers have canonical state plus reconnect
             // resends. The next announce overwrites them, so swapping in older glasses
@@ -4877,6 +4881,9 @@ class BusHubService : Service() {
         // not make an otherwise valid start or update disappear.
         if (remoteActivitySurfaceVersion == ActivitySurfaceContract.VERSION) {
             capabilities = capabilities or BusCapabilityBits.ACTIVITY_SURFACE
+            if (remoteActivityExtrasVersion == ActivitySurfaceContract.EXTRAS_VERSION) {
+                capabilities = capabilities or BusCapabilityBits.ACTIVITY_EXTRAS
+            }
         }
         // Same reasoning as the notice gate above: a card opened to type into is a
         // live interactive moment, not state a plugin can just resend once the
@@ -4936,6 +4943,12 @@ class BusHubService : Service() {
         remotePinSurfaceVersion = if (pinSupported) PinSurfaceContract.VERSION else 0
         remoteNoticeSurfaceVersion = if (noticeSupported) NoticeSurfaceContract.VERSION else 0
         remoteActivitySurfaceVersion = if (activitySupported) ActivitySurfaceContract.VERSION else 0
+        remoteActivityExtrasVersion =
+            if (GlassesHubCapabilitiesContract.supportsActivityExtras(advertised)) {
+                ActivitySurfaceContract.EXTRAS_VERSION
+            } else {
+                0
+            }
         remoteInkSurfaceVersion = acceptedInkVersion
         remoteEditableSurfaceVersion = if (editableSupported) EditableSurfaceContract.VERSION else 0
         remoteMaxImageBytes = if (imageSupported) advertised.maxImageBytes else 0

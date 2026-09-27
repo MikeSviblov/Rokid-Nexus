@@ -4,7 +4,12 @@ Phone-side Rokid Nexus voice assistant plugin.
 
 Hold the assist button, ask out loud: the words transcribe live on the HUD, then
 the answer streams into the band, is spoken aloud, or hands over in place to a
-native Ink page. Picking Assistant in the glasses launcher listens at once, no
+native Ink page. The *Input* setting can also let the wearer type: a *Type*
+chip while it listens, or *Type first*, which opens the field without the
+microphone. The band then becomes the text field, typed from the phone's
+Keyboard & remote, which comes up on its own, and Enter sends the question down
+the same path as speech (`EditableSurfaceField.inNotice`; a card on glasses hubs
+before 1.4.13, voice on older ones). *Voice only* is the default. Picking Assistant in the glasses launcher listens at once, no
 button needed — tap the card to ask again — and a swipe on that card opens the
 options: one row that hands the assist button to Nexus or back to Rokid's
 assistant. Pausing it there does not touch the plugin's grant; the wearer can
@@ -29,7 +34,10 @@ only `take_photo` additionally requires a model that can see, and photos are
 stripped gracefully for models that cannot. `render_ink_page` and
 `render_template` can turn suitable results into the same strict compiled Ink
 surface exposed by the public Nexus SDK; the template tool offers seven bounded
-layouts. A server that rejects tools outright is retried once without them.
+layouts. The *Visual answers* setting decides which of the two the model is
+offered: *Templates only* by default, *Free pages* for both, or *Off* for none,
+which keeps every answer as text in the band. A server that rejects tools
+outright is retried once without them.
 
 A Hermes backend runs its tools server-side and never returns a client tool
 call, so the same twelve phone tools are described in the system prompt and

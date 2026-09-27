@@ -8,10 +8,12 @@ import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
+import android.text.Editable
 import android.text.InputFilter
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.InputType
@@ -100,12 +102,15 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         gravity = Gravity.CENTER_VERTICAL
         visibility = GONE
     }
-    private val editView = EditText(context).apply {
+    private val editView = CaretReportingEditText(context).apply {
         visibility = GONE
         isFocusable = true
         isFocusableInTouchMode = true
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         imeOptions = EditorInfo.IME_ACTION_SEND
+        // A plugin opened this field to be typed into, so the phone may bring its
+        // keyboard up for it, unlike any field the wearer merely lands on.
+        privateImeOptions = RemoteInputMetadataPolicy.EDITABLE_SURFACE_IME_OPTION
         setTextColor(BusTheme.text)
         setHintTextColor(BusTheme.dim)
         setBackgroundColor(BusTheme.glassesBg)
@@ -140,6 +145,12 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             }
             isEnterDown
         }
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = mirrorCompose()
+        })
+        onCaretMoved = ::mirrorCompose
     }
     private val readerView = ReaderSurfaceView(context).apply { visibility = GONE }
     private val mediaView = MediaHudView(context).apply { visibility = GONE }
@@ -165,6 +176,17 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
     private var surface: NexusSurface? = null
     private var lastEditableSurfaceId: String? = null
+    // The plugin whose band is drawing this field, while it is; see NoticeComposeMirror.
+    private var inlineOwner: String? = null
+    private var inlinePlaceholder = ""
+    private var stopWatchingNotice: (() -> Unit)? = null
+    private val inlineFallback = Runnable { surface?.let(::renderNow) }
+
+    /** A bare card is drawing nothing while its owner's band carries the session. */
+    private var heldUnderBand = false
+
+    /** The view draws nothing of its own, background included; see [applySeeThrough]. */
+    private var seeThrough = false
     private var listRenderGeneration = 0L
     private var pendingListLayoutListener: View.OnLayoutChangeListener? = null
     private var insetUnsubscribe: (() -> Unit)? = null
@@ -197,6 +219,10 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         setPadding(px(18), px(16), px(18), px(12))
         isFocusable = true
         isFocusableInTouchMode = true
+        // The glasses never enter touch mode, so the platform would wash this focused,
+        // full-screen view in its translucent white focus highlight: a grey veil over
+        // whatever a see-through card leaves in view.
+        defaultFocusHighlightEnabled = false
 
         applyMarquee(titleView)
         subtitleView.maxLines = 1
@@ -320,6 +346,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     }
 
     override fun onDetachedFromWindow() {
+        endInline()
         insetUnsubscribe?.invoke()
         insetUnsubscribe = null
         removeCallbacks(ticker)
@@ -381,6 +408,11 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
 
     private fun renderNow(surface: NexusSurface) {
         invalidatePendingListLayout()
+        heldUnderBand = false
+        if (seeThrough) {
+            seeThrough = false
+            statusRowView.visibility = VISIBLE
+        }
         when (surfaceHudMode(surface.kind)) {
             SurfaceHudMode.INK_CARD -> applyInkCardHost()
             SurfaceHudMode.FULL_BLEED -> applyFullBleedHost()
@@ -395,6 +427,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         if (!surface.isInk) hideInk()
         if (surface.kind != NexusSurface.KIND_CARD || surface.editable == null) {
             editView.visibility = GONE
+            // A bare card follows its owner's band too: keep that subscription rather than
+            // dropping it only for renderCard to take a fresh one, which answers at once.
+            endInline(keepWatching = surface.isBareCard())
         }
         when {
             surface.isInk -> renderInk(surface)
@@ -437,7 +472,104 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
             editView.setSelection(editView.text?.length ?: 0)
         }
         lastEditableSurfaceId = surface.surfaceId
+        val inline = editableDrawsInNotice(
+            inNotice = editable.inNotice,
+            surfaceOwnerPluginId = surface.ownerPluginId,
+            visibleNoticeOwnerPluginId = NoticeController.visibleNotice()?.ownerPluginId,
+        )
+        applyInline(if (inline) surface.ownerPluginId else null, editable.placeholder.orEmpty())
+        if (editable.inNotice) watchNotice() else stopWatchingNotice()
         editView.requestFocus()
+    }
+
+    /**
+     * Hands the field's drawing to its owner's band, or takes it back. Drawn
+     * black rather than hidden: a GONE field loses its focus, and with it the
+     * IME the wearer is typing through.
+     */
+    private fun applyInline(owner: String?, placeholder: String) {
+        removeCallbacks(inlineFallback)
+        val previous = inlineOwner
+        inlineOwner = owner
+        inlinePlaceholder = placeholder
+        if (previous != null && previous != owner) NoticeComposeMirror.clear(previous)
+        val inline = owner != null
+        editView.alpha = if (inline) 0f else 1f
+        applySeeThrough(inline)
+        if (inline) mirrorCompose()
+    }
+
+    /**
+     * Steps entirely out of the way — chrome and background — while the owner's band carries
+     * this surface, so the band sits over whatever the wearer was looking at rather than over a
+     * black screen. The window itself is translucent on both display paths; only this view's own
+     * fill ever made it opaque.
+     */
+    private fun applySeeThrough(on: Boolean) {
+        seeThrough = on
+        statusRowView.visibility = if (on) GONE else VISIBLE
+        if (on) {
+            background = null
+            titleView.visibility = GONE
+            subtitleView.visibility = GONE
+            footerView.visibility = GONE
+        } else if (surface?.isInk != true) {
+            applyFullBleedHost()
+        }
+    }
+
+    private fun endInline(keepWatching: Boolean = false) {
+        if (!keepWatching) stopWatchingNotice()
+        if (inlineOwner != null) applyInline(null, "")
+    }
+
+    private fun mirrorCompose() {
+        val owner = inlineOwner ?: return
+        NoticeComposeMirror.publish(
+            NoticeComposeMirror.Line(
+                ownerPluginId = owner,
+                text = editView.text?.toString().orEmpty(),
+                cursor = editView.selectionEnd.coerceAtLeast(0),
+                placeholder = inlinePlaceholder,
+            ),
+        )
+    }
+
+    /**
+     * Follows the owner's band for as long as an in-notice field or a bare card
+     * is up. Moving into a band that arrives is immediate. Moving out waits: the
+     * band closing on Back or its own lifetime is normally followed by the plugin
+     * hiding this surface, and showing the card for that instant would only flash
+     * it. A surface nobody hides still comes back into view, rather than typing
+     * on unseen.
+     */
+    private fun watchNotice() {
+        if (stopWatchingNotice != null) return
+        stopWatchingNotice = NoticeController.observe { notice ->
+            val active = surface ?: return@observe
+            val owner = notice?.ownerPluginId
+            val editable = active.editable
+            val wanted = if (editable != null) {
+                editableDrawsInNotice(editable.inNotice, active.ownerPluginId, owner)
+            } else {
+                cardHoldsUnderBand(active, owner)
+            }
+            val drawn = if (editable != null) inlineOwner != null else heldUnderBand
+            when {
+                wanted == drawn -> removeCallbacks(inlineFallback)
+                wanted -> renderNow(active)
+                else -> {
+                    removeCallbacks(inlineFallback)
+                    postDelayed(inlineFallback, INLINE_FALLBACK_DELAY_MS)
+                }
+            }
+        }
+    }
+
+    private fun stopWatchingNotice() {
+        removeCallbacks(inlineFallback)
+        stopWatchingNotice?.invoke()
+        stopWatchingNotice = null
     }
 
     private fun renderInk(surface: NexusSurface) {
@@ -470,7 +602,9 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
     private fun applyHostChrome(mode: SurfaceHudMode) {
         val chrome = surfaceHostChrome(mode, hudTopInsetDp)
         val fill = chrome.backgroundColor
-        if (fill == null) background = null else setBackgroundColor(fill)
+        // The top-inset observer re-applies this chrome whenever the view attaches, which for a
+        // freshly created surface activity is after the band already took the field.
+        if (fill == null || seeThrough) background = null else setBackgroundColor(fill)
         setPadding(
             px(chrome.paddingLeftDp),
             px(chrome.paddingTopDp),
@@ -739,6 +873,18 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         imageView.visibility = GONE
         previousView.visibility = GONE
         nextView.visibility = GONE
+        if (surface.isBareCard()) {
+            // Settled before subscribing: the observer answers at once, and it must find this
+            // render already matching the band, not re-render into another subscription.
+            heldUnderBand = cardHoldsUnderBand(surface, NoticeController.visibleNotice()?.ownerPluginId)
+            watchNotice()
+            if (heldUnderBand) {
+                currentView.visibility = GONE
+                boardView.visibility = GONE
+                applySeeThrough(true)
+                return
+            }
+        }
         val rows = surface.rows.filter { it.text.isNotBlank() || it.isStructured }
         when {
             rows.any { it.isListRow } -> renderList(rows)
@@ -1156,6 +1302,7 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         boardView.visibility = GONE
         editView.setText("")
         editView.visibility = GONE
+        endInline()
         lastEditableSurfaceId = null
         currentView.visibility = VISIBLE
     }
@@ -1179,6 +1326,8 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val TICK_MS = 100L
         private const val MEDIA_TICK_MS = 500L
         private const val STATUS_ROW_TICK_MS = 30_000L
+        /** Long enough for the plugin to hide its field after its band closes; see watchNotice. */
+        private const val INLINE_FALLBACK_DELAY_MS = 1_500L
 
         // Plain card bodies (messages, chooser): smaller mono, more lines.
         // Auto-fit mirrors the lyrics pattern: short bodies keep the full
@@ -1213,5 +1362,15 @@ class SurfaceHudView(context: Context) : LinearLayout(context) {
         private const val LIST_LABEL_WIDTH_DP = 38
         private const val LIST_BODY_MAX_LINES = 3
         private const val LIST_BODY_GAP_DP = 9
+    }
+}
+
+/** Reports caret moves as well as edits: a TextWatcher never sees an arrow key. */
+private class CaretReportingEditText(context: Context) : EditText(context) {
+    var onCaretMoved: (() -> Unit)? = null
+
+    override fun onSelectionChanged(selStart: Int, selEnd: Int) {
+        super.onSelectionChanged(selStart, selEnd)
+        onCaretMoved?.invoke()
     }
 }

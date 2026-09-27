@@ -137,6 +137,14 @@ object BusPaths {
     const val GLASSES_ACCESSIBILITY_CHECK_REPLY = "/glasses/accessibility-check/reply"
 
     /**
+     * Phone hub to glasses hub only: read which input method the glasses use, or select Nexus's
+     * own so the phone's Keyboard & remote can type into glasses fields. See
+     * [GlassesKeyboardContract].
+     */
+    const val GLASSES_KEYBOARD_REQUEST = "/glasses/keyboard/request"
+    const val GLASSES_KEYBOARD_REPLY = "/glasses/keyboard/reply"
+
+    /**
      * Phone hub to glasses hub only: arm the native-assistant dismiss so an approved plugin
      * holding the ASSISTANT capability can replace Rokid's assistant with its own surface.
      * The gesture is consumed inside the ROM and never reaches our accessibility service, so the
@@ -207,6 +215,7 @@ object BusCapabilityBits {
     const val TTS = 1 shl 9
     const val INK_SURFACE = 1 shl 10
     const val EDITABLE_SURFACE = 1 shl 11
+    const val ACTIVITY_EXTRAS = 1 shl 12
 }
 
 object LinkStateBits {

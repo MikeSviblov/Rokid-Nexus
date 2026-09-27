@@ -27,6 +27,8 @@ import com.anezium.rokidbus.shared.FrameProtocol
 import com.anezium.rokidbus.shared.SppKeyProvisioning
 import com.anezium.rokidbus.shared.GlassesAccessibilityCheckContract
 import com.anezium.rokidbus.shared.GlassesHubCapabilitiesContract
+import com.anezium.rokidbus.shared.GlassesKeyboardContract
+import com.anezium.rokidbus.shared.GlassesKeyboardReply
 import com.anezium.rokidbus.shared.GlassesRepairContract
 import com.anezium.rokidbus.shared.GlyphContract
 import com.anezium.rokidbus.shared.ImageSurfaceContract
@@ -187,7 +189,7 @@ object GlassesHub {
     fun start(context: Context) {
         val applicationContext = context.applicationContext
         appContext = applicationContext
-        RemoteInputImeProvisioner.ensureConfigured(applicationContext)
+        GlassesKeyboardKeeper.start(applicationContext)
         RemoteInputHubBridge.initialize { path, payload ->
             sendRemote(BusEnvelope(path = path, payload = payload)) == null
         }
@@ -366,6 +368,10 @@ object GlassesHub {
                 "accessibilityCheck foreign=${scan.foreign.size} " +
                     "nexusEnabled=${scan.nexusEnabled} replyError=${error ?: "none"}",
             )
+            return
+        }
+        if (envelope.path == BusPaths.GLASSES_KEYBOARD_REQUEST) {
+            GlassesKeyboardKeeper.post { handleKeyboardRequest(envelope) }
             return
         }
         if (envelope.path == BusPaths.WIRELESS_ADB_REQUEST) {
@@ -670,6 +676,7 @@ object GlassesHub {
                 BusCapabilityBits.PIN_SURFACE or
                 BusCapabilityBits.NOTICE_SURFACE or
                 BusCapabilityBits.ACTIVITY_SURFACE or
+                BusCapabilityBits.ACTIVITY_EXTRAS or
                 BusCapabilityBits.INK_SURFACE or
                 BusCapabilityBits.EDITABLE_SURFACE or
                 (if (ttsAvailable) BusCapabilityBits.TTS else 0),
@@ -679,6 +686,7 @@ object GlassesHub {
             activitySurfaceVersion = ActivitySurfaceContract.VERSION,
             inkSurfaceVersion = InkWire.VERSION,
             editableSurfaceVersion = EditableSurfaceContract.VERSION,
+            activityExtrasVersion = ActivitySurfaceContract.EXTRAS_VERSION,
             maxImageBytes = ImageSurfaceContract.MAX_IMAGE_BYTES,
             versionName = BuildConfig.VERSION_NAME,
             setupComplete = onboardingState.stage == SelfArmOnboardingState.Stage.COMPLETE,
@@ -887,6 +895,51 @@ object GlassesHub {
                 // as foreign.
                 .filter { ComponentName.unflattenFromString(it) != own },
             nexusEnabled = enabled.any { ComponentName.unflattenFromString(it) == own },
+        )
+    }
+
+    private fun handleKeyboardRequest(envelope: BusEnvelope) {
+        val context = appContext
+        if (context == null) {
+            sendRemote(errorEnvelope(envelope.id, "HUB_NOT_READY"))
+            return
+        }
+        val request = GlassesKeyboardContract.fromRequest(envelope.payload)
+        if (request == null) {
+            sendRemote(errorEnvelope(envelope.id, "INVALID_ACTION"))
+            return
+        }
+        val action = request.action
+        request.keep?.let { GlassesKeyboardKeeper.setKeepEnabled(context, it) }
+        val canSwitch = RemoteInputImeProvisioner.canConfigure(context)
+        val error = when {
+            action != GlassesKeyboardContract.ACTION_USE_NEXUS -> null
+            !canSwitch -> GlassesKeyboardContract.ERROR_PERMISSION_MISSING
+            !RemoteInputImeProvisioner.selectNexus(context) -> GlassesKeyboardContract.ERROR_FAILED
+            else -> null
+        }
+        val selected = RemoteInputImeProvisioner.selectedMethod(context)
+        val reply = GlassesKeyboardReply(
+            nexusSelected = RemoteInputImeProvisioner.isNexus(
+                selected,
+                RemoteInputImeProvisioner.nexusComponent(context),
+            ),
+            canSwitch = canSwitch,
+            keepNexus = GlassesKeyboardKeeper.isKeepEnabled(context),
+            currentPackage = RemoteInputImeProvisioner.methodPackage(selected),
+            error = error,
+        )
+        val replyError = sendRemote(
+            BusEnvelope(
+                path = BusPaths.GLASSES_KEYBOARD_REPLY,
+                id = envelope.id,
+                payload = GlassesKeyboardContract.replyToJson(reply),
+            ),
+        )
+        log(
+            "keyboard action=$action keep=${reply.keepNexus} nexusSelected=${reply.nexusSelected} " +
+                "current=${reply.currentPackage ?: "none"} error=${error ?: "none"} " +
+                "replyError=${replyError ?: "none"}",
         )
     }
 
